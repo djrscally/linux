@@ -286,8 +286,12 @@ static int dcmipp_par_set_fmt(struct v4l2_subdev *sd,
 	*mf = fmt->format;
 
 	/* When setting the sink format, report that format on the src pad as well */
-	if (IS_SINK(fmt->pad))
-		par->src_format = fmt->format;
+	if (IS_SINK(fmt->pad)) {
+		if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+			par->src_format = fmt->format;
+		else
+			*v4l2_subdev_get_try_format(sd, sd_state, 1) = fmt->format;
+	}
 
 	return 0;
 }
