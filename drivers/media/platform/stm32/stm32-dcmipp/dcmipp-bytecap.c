@@ -91,6 +91,21 @@ static const struct dcmipp_bytecap_pix_map *dcmipp_bytecap_pix_map_by_pixelforma
 	return NULL;
 }
 
+static const struct dcmipp_bytecap_pix_map *
+dcmipp_bytecap_pix_map_by_mbus_code(u32 mbus_code)
+{
+	const struct dcmipp_bytecap_pix_map *l = dcmipp_bytecap_pix_map_list;
+	unsigned int size = ARRAY_SIZE(dcmipp_bytecap_pix_map_list);
+	unsigned int i;
+
+	for (i = 0; i < size; i++) {
+		if (l[i].code == mbus_code)
+			return &l[i];
+	}
+
+	return NULL;
+}
+
 static const struct dcmipp_bytecap_pix_map *dcmipp_bytecap_pix_map_by_index(unsigned int i)
 {
 	const struct dcmipp_bytecap_pix_map *l = dcmipp_bytecap_pix_map_list;
@@ -338,7 +353,16 @@ static int dcmipp_bytecap_s_fmt_vid_cap(struct file *file, void *priv,
 static int dcmipp_bytecap_enum_fmt_vid_cap(struct file *file, void *priv,
 					   struct v4l2_fmtdesc *f)
 {
-	const struct dcmipp_bytecap_pix_map *vpix = dcmipp_bytecap_pix_map_by_index(f->index);
+	const struct dcmipp_bytecap_pix_map *vpix;
+
+	if (f->mbus_code) {
+		if (f->index)
+			return -EINVAL;
+
+		vpix = dcmipp_bytecap_pix_map_by_mbus_code(f->mbus_code);
+	} else {
+		vpix = dcmipp_bytecap_pix_map_by_index(f->index);
+	}
 
 	if (!vpix)
 		return -EINVAL;
@@ -1038,7 +1062,7 @@ static int dcmipp_bytecap_comp_bind(struct device *comp, struct device *master,
 	/* Initialize the video_device struct */
 	vdev = &vcap->vdev;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING |
-			    V4L2_CAP_READWRITE;
+			    V4L2_CAP_READWRITE | V4L2_CAP_IO_MC;
 	vdev->entity.ops = &dcmipp_bytecap_mops;
 	vdev->release = dcmipp_bytecap_release;
 	vdev->fops = &dcmipp_bytecap_fops;
