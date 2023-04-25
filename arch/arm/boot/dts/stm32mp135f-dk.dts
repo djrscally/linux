@@ -335,16 +335,16 @@
 	/delete-property/dmas;
 	/delete-property/dma-names;
 
-	gc2145: gc2145@3c {
+	gc2145: camera@3c {
 		compatible = "galaxycore,gc2145";
 		reg = <0x3c>;
+		status = "okay";
 		clocks = <&clk_ext_camera>;
 		IOVDD-supply = <&scmi_v3v3_sw>;
 		AVDD-supply = <&scmi_v3v3_sw>;
 		DVDD-supply = <&scmi_v3v3_sw>;
 		powerdown-gpios = <&mcp23017 3 (GPIO_ACTIVE_LOW | GPIO_PUSH_PULL)>;
 		reset-gpios = <&mcp23017 4 (GPIO_ACTIVE_LOW | GPIO_PUSH_PULL)>;
-		status = "okay";
 
 		port {
 			gc2145_ep: endpoint {
@@ -369,7 +369,7 @@
 		touchscreen-size-y = <272>;
 		status = "okay";
 	};
-
+/*
 	ov5640: camera@3c {
 		compatible = "ovti,ov5640";
 		reg = <0x3c>;
@@ -387,7 +387,7 @@
 			};
 		};
 	};
-
+*/
 	stmipi: stmipi@14 {
 		compatible = "st,st-mipid02";
 		reg = <0x14>;
@@ -401,6 +401,7 @@
 		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
+
 			port@0 {
 				reg = <0>;
 
@@ -410,6 +411,7 @@
 					remote-endpoint = <&gc2145_ep>;
 				};
 			};
+
 			port@2 {
 				reg = <2>;
 
