@@ -39,6 +39,11 @@
 
 #define GC2145_CHIP_ID		0x2145
 
+#define GC2145_MAX_VBLANK	8191
+#define GC2145_MAX_HBLANK	4095
+#define GC2145_REG_VBLANK_H	0x07
+#define GC2145_REG_VBLANK_L	0x08
+
 #define GC2145_NATIVE_WIDTH		1616
 #define GC2145_NATIVE_HEIGHT		1248
 #define GC2145_ACTIVE_START_TOP		32
@@ -70,6 +75,8 @@ struct gc2145_reg_list {
 struct gc2145_mode {
 	unsigned int width;
 	unsigned int height;
+	unsigned int hblank;
+	unsigned int vblank;
 	struct v4l2_fract frame_interval;
 	struct gc2145_reg_list reg_list;
 	unsigned long pixel_rate;
@@ -855,6 +862,8 @@ static const struct gc2145_mode supported_modes[] = {
 		/* 640x480 30fps mode */
 		.width = 640,
 		.height = 480,
+		.hblank = 304,
+		.vblank = 12,
 		.frame_interval = {
 			.numerator = 1,
 			.denominator = 30,
@@ -869,6 +878,8 @@ static const struct gc2145_mode supported_modes[] = {
 		/* 1280x720 30fps mode */
 		.width = 1280,
 		.height = 720,
+		.hblank = 342,
+		.vblank = 18,
 		.frame_interval = {
 			.numerator = 1,
 			.denominator = 30,
@@ -883,6 +894,8 @@ static const struct gc2145_mode supported_modes[] = {
 		/* 1600x1200 20fps mode */
 		.width = 1600,
 		.height = 1200,
+		.hblank = 342,
+		.vblank = 50,
 		.frame_interval = {
 			.numerator = 1,
 			.denominator = 20,
@@ -956,6 +969,8 @@ struct gc2145_ctrls {
 	struct v4l2_ctrl *test_pattern;
 	struct v4l2_ctrl *hflip;
 	struct v4l2_ctrl *vflip;
+	struct v4l2_ctrl *vblank;
+	struct v4l2_ctrl *hblank;
 };
 
 struct gc2145 {
@@ -1323,8 +1338,17 @@ static int gc2145_set_pad_format(struct v4l2_subdev *sd, struct v4l2_subdev_stat
 		gc2145->mode = mode;
 		gc2145->crop.width = mode->width;
 		gc2145->crop.height = mode->height;
-		/* Update pixel_rate based on the mode */
+		/* Update controls based on the mode */
 		__v4l2_ctrl_s_ctrl_int64(ctrls->pixel_rate, mode->pixel_rate);
+
+		__v4l2_ctrl_modify_range(ctrls->hblank, gc2145->mode->hblank,
+					 gc2145->mode->hblank, 1,
+					 gc2145->mode->hblank);
+		__v4l2_ctrl_s_ctrl(ctrls->hblank, gc2145->mode->hblank);
+
+		__v4l2_ctrl_modify_range(ctrls->vblank, 0, GC2145_MAX_VBLANK, 1,
+					 gc2145->mode->vblank);
+		__v4l2_ctrl_s_ctrl(ctrls->vblank, gc2145->mode->vblank);
 	}
 
 	mutex_unlock(&gc2145->mutex);
@@ -1732,6 +1756,24 @@ static int gc2145_set_ctrl_vflip(struct gc2145 *gc2145, int value)
 			      BIT(1), (value ? BIT(1) : 0));
 }
 
+static int gc2145_set_ctrl_vblank(struct gc2145 *gc2145, int value)
+{
+	int ret;
+	u8 val;
+
+	ret = gc2145_write_reg(gc2145, GC2145_REG_PAGE_SELECT, 0x00);
+	if (ret)
+		return ret;
+
+	val = (value >> 8) & 0x1f;
+	ret = gc2145_write_reg(gc2145, GC2145_REG_VBLANK_H, val);
+	if (ret)
+		return ret;
+
+	val = value & 0xff;
+	return gc2145_write_reg(gc2145, GC2145_REG_VBLANK_L, val);
+}
+
 static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
@@ -1754,6 +1796,9 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_VFLIP:
 		ret = gc2145_set_ctrl_vflip(gc2145, ctrl->val);
+		break;
+	case V4L2_CID_VBLANK:
+		ret = gc2145_set_ctrl_vblank(gc2145, ctrl->val);
 		break;
 	default:
 		ret = -EINVAL;
@@ -1797,6 +1842,16 @@ static int gc2145_init_controls(struct gc2145 *gc2145)
 					 0, 1, 1, 0);
 	ctrls->vflip = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VFLIP,
 					 0, 1, 1, 0);
+	ctrls->vblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK, 0,
+					  GC2145_MAX_VBLANK, 1,
+					  gc2145->mode->vblank);
+
+	ctrls->hblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HBLANK,
+					  gc2145->mode->hblank,
+					  gc2145->mode->hblank, 1,
+					  gc2145->mode->hblank);
+	if (ctrls->hblank)
+		ctrls->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	if (hdl->error) {
 		ret = hdl->error;
