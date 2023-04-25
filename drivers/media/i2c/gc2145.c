@@ -44,6 +44,13 @@
 #define GC2145_REG_VBLANK_H	0x07
 #define GC2145_REG_VBLANK_L	0x08
 
+#define GC2145_MAX_EXPOSURE		8191
+#define GC2145_REG_EXPOSURE_AUTO	0xb6
+#define GC2145_REG_EXPOSURE_H		0x03
+#define GC2145_REG_EXPOSURE_L		0x04
+#define GC2145_REG_ANALOGUE_GAIN	0xb1
+#define GC2145_REG_DIGITAL_GAIN		0xb2
+
 #define GC2145_NATIVE_WIDTH		1616
 #define GC2145_NATIVE_HEIGHT		1248
 #define GC2145_ACTIVE_START_TOP		32
@@ -971,6 +978,12 @@ struct gc2145_ctrls {
 	struct v4l2_ctrl *vflip;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *hblank;
+	struct {
+		struct v4l2_ctrl *exposure_auto;
+		struct v4l2_ctrl *exposure;
+		struct v4l2_ctrl *analogue_gain;
+		struct v4l2_ctrl *digital_gain;
+	};
 };
 
 struct gc2145 {
@@ -1774,6 +1787,93 @@ static int gc2145_set_ctrl_vblank(struct gc2145 *gc2145, int value)
 	return gc2145_write_reg(gc2145, GC2145_REG_VBLANK_L, val);
 }
 
+static int gc2145_set_auto_exposure(struct gc2145 *gc2145)
+{
+	return gc2145_write_reg(gc2145, GC2145_REG_EXPOSURE_AUTO,
+				!gc2145->ctrls.exposure_auto->val);
+}
+
+static int gc2145_set_manual_exposure(struct gc2145 *gc2145)
+{
+	int ret;
+	u8 val;
+
+	ret = gc2145_write_reg(gc2145, GC2145_REG_PAGE_SELECT, 0x00);
+	if (ret)
+		return ret;
+
+	val = (gc2145->ctrls.exposure->val >> 8) & 0x05;
+	ret = gc2145_write_reg(gc2145, GC2145_REG_EXPOSURE_H, val);
+	if (ret)
+		return ret;
+
+	val = gc2145->ctrls.exposure->val & 0xff;
+	ret = gc2145_write_reg(gc2145, GC2145_REG_EXPOSURE_L, val);
+
+	return ret;
+}
+
+static int gc2145_set_analogue_gain(struct gc2145 *gc2145)
+{
+	int ret;
+	u8 val;
+
+	ret = gc2145_write_reg(gc2145, GC2145_REG_PAGE_SELECT, 0x00);
+	if (ret)
+		return ret;
+
+	val = gc2145->ctrls.analogue_gain->val & 0xff;
+	return gc2145_write_reg(gc2145, GC2145_REG_ANALOGUE_GAIN, val);
+}
+
+static int gc2145_set_digital_gain(struct gc2145 *gc2145)
+{
+	int ret;
+	u8 val;
+
+	ret = gc2145_write_reg(gc2145, GC2145_REG_PAGE_SELECT, 0x00);
+	if (ret)
+		return ret;
+
+	val = gc2145->ctrls.analogue_gain->val & 0xff;
+	return gc2145_write_reg(gc2145, GC2145_REG_DIGITAL_GAIN, val);
+}
+
+static int gc2145_set_ctrl_exposure(struct gc2145 *gc2145)
+{
+	struct gc2145_ctrls *ctrls = &gc2145->ctrls;
+	int ret;
+
+	if (ctrls->exposure_auto->is_new) {
+		ret = gc2145_set_auto_exposure(gc2145);
+		if (ret)
+			return ret;
+	}
+
+	if (ctrls->exposure_auto->val == V4L2_EXPOSURE_MANUAL) {
+
+		if (ctrls->exposure->is_new) {
+			ret = gc2145_set_manual_exposure(gc2145);
+			if (ret)
+				return ret;
+		}
+
+		if (ctrls->analogue_gain->is_new) {
+			ret = gc2145_set_analogue_gain(gc2145);
+			if (ret)
+				return ret;
+		}
+
+		if (ctrls->digital_gain->is_new) {
+			ret = gc2145_set_digital_gain(gc2145);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
@@ -1800,6 +1900,9 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_VBLANK:
 		ret = gc2145_set_ctrl_vblank(gc2145, ctrl->val);
 		break;
+	case V4L2_CID_EXPOSURE_AUTO:
+		ret = gc2145_set_ctrl_exposure(gc2145);
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -1809,8 +1912,61 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
 	return ret;
 }
 
+static int gc2145_get_exposure_values(struct gc2145 *gc2145)
+{
+	u8 analogue_gain;
+	u8 digital_gain;
+	u16 exposure;
+	int ret;
+
+	ret = gc2145_read_reg(gc2145, GC2145_REG_EXPOSURE_H, (u8 *)&exposure, 2);
+	if (ret)
+		return ret;
+
+	gc2145->ctrls.exposure->val = exposure;
+
+	ret = gc2145_read_reg(gc2145, GC2145_REG_ANALOGUE_GAIN, &analogue_gain, 1);
+	if (ret)
+		return ret;
+
+	gc2145->ctrls.analogue_gain->val = analogue_gain;
+
+	ret = gc2145_read_reg(gc2145, GC2145_REG_DIGITAL_GAIN, &digital_gain, 1);
+	if (ret)
+		return ret;
+
+	gc2145->ctrls.digital_gain->val = digital_gain;
+
+	return 0;
+}
+
+static int gc2145_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct gc2145 *gc2145 = to_gc2145(sd);
+	int ret;
+
+	/* If the sensor is off, the cached value is the best we can do */
+	if (!pm_runtime_get_if_in_use(&client->dev))
+		return 0;
+
+	switch (ctrl->id) {
+	case V4L2_CID_EXPOSURE_AUTO:
+		ret = gc2145_get_exposure_values(gc2145);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+	pm_runtime_put(&client->dev);
+
+	return ret;
+}
+
 static const struct v4l2_ctrl_ops gc2145_ctrl_ops = {
 	.s_ctrl = gc2145_s_ctrl,
+	.g_volatile_ctrl = gc2145_g_volatile_ctrl,
 };
 
 /* Initialize control handlers */
@@ -1852,6 +2008,20 @@ static int gc2145_init_controls(struct gc2145 *gc2145)
 					  gc2145->mode->hblank);
 	if (ctrls->hblank)
 		ctrls->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+	ctrls->exposure_auto = v4l2_ctrl_new_std_menu(hdl, ops,
+						      V4L2_CID_EXPOSURE_AUTO,
+						      V4L2_EXPOSURE_MANUAL, 0,
+						      V4L2_EXPOSURE_AUTO);
+
+	ctrls->exposure = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE, 0, 8191,
+					    1, 4095);
+	ctrls->analogue_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
+						 0, 0xff, 1, 0x20);
+	ctrls->digital_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_DIGITAL_GAIN,
+						0, 0xff, 1, 0x20);
+
+	v4l2_ctrl_auto_cluster(4, &ctrls->exposure_auto, V4L2_EXPOSURE_MANUAL, true);
 
 	if (hdl->error) {
 		ret = hdl->error;
