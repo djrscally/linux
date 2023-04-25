@@ -39,6 +39,13 @@
 
 #define GC2145_CHIP_ID		0x2145
 
+#define GC2145_NATIVE_WIDTH		1616
+#define GC2145_NATIVE_HEIGHT		1248
+#define GC2145_ACTIVE_START_TOP		32
+#define GC2145_ACTIVE_START_LEFT	8
+#define GC2145_ACTIVE_WIDTH		1600
+#define GC2145_ACTIVE_HEIGHT		1200
+
 /* External clock frequency is 24.0MHz */
 #define GC2145_XCLK_FREQ	(24 * HZ_PER_MHZ)
 
@@ -968,6 +975,7 @@ struct gc2145 {
 
 	/* Current mode */
 	const struct gc2145_mode *mode;
+	struct v4l2_rect crop;
 
 	/*
 	 * Mutex for serialized access:
@@ -1191,6 +1199,53 @@ static int gc2145_enum_frame_interval(struct v4l2_subdev *sd, struct v4l2_subdev
 	return 0;
 }
 
+static struct v4l2_rect *
+__gc2145_get_pad_crop(struct gc2145 *gc2145, struct v4l2_subdev_state *state,
+		      unsigned int pad, enum v4l2_subdev_format_whence which)
+{
+	switch (which) {
+	case V4L2_SUBDEV_FORMAT_TRY:
+		return v4l2_subdev_get_try_crop(&gc2145->sd, state, pad);
+	case V4L2_SUBDEV_FORMAT_ACTIVE:
+		return &gc2145->crop;
+	}
+
+	return NULL;
+}
+
+static int gc2145_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	struct gc2145 *gc2145 = to_gc2145(sd);
+
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+		 mutex_lock(&gc2145->mutex);
+		 sel->r = *__gc2145_get_pad_crop(gc2145, state, sel->pad,
+						 sel->which);
+		 mutex_unlock(&gc2145->mutex);
+		 break;
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		sel->r.left = 0;
+		sel->r.top = 0;
+		sel->r.width = GC2145_NATIVE_WIDTH;
+		sel->r.height = GC2145_NATIVE_HEIGHT;
+		break;
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+		sel->r.left = GC2145_ACTIVE_START_LEFT;
+		sel->r.top = GC2145_ACTIVE_START_TOP;
+		sel->r.width = GC2145_ACTIVE_WIDTH;
+		sel->r.height = GC2145_ACTIVE_HEIGHT;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static void gc2145_reset_colorspace(struct v4l2_mbus_framefmt *fmt)
 {
 	fmt->colorspace = V4L2_COLORSPACE_SRGB;
@@ -1266,6 +1321,8 @@ static int gc2145_set_pad_format(struct v4l2_subdev *sd, struct v4l2_subdev_stat
 	} else if (gc2145->mode != mode || gc2145->fmt.code != fmt->format.code) {
 		gc2145->fmt = fmt->format;
 		gc2145->mode = mode;
+		gc2145->crop.width = mode->width;
+		gc2145->crop.height = mode->height;
 		/* Update pixel_rate based on the mode */
 		__v4l2_ctrl_s_ctrl_int64(ctrls->pixel_rate, mode->pixel_rate);
 	}
@@ -1622,6 +1679,7 @@ static const struct v4l2_subdev_pad_ops gc2145_pad_ops = {
 	.set_fmt = gc2145_set_pad_format,
 	.enum_frame_size = gc2145_enum_frame_size,
 	.enum_frame_interval = gc2145_enum_frame_interval,
+	.get_selection = gc2145_get_selection,
 };
 
 static const struct v4l2_subdev_ops gc2145_subdev_ops = {
